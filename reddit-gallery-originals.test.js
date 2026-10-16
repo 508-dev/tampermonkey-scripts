@@ -189,6 +189,32 @@ test('internal carousel scrolling triggers a rescan', async () => {
   assert.equal(next.img.getAttribute('src'), 'https://i.redd.it/next.png');
 });
 
+test('leaving slide mode restores the preview and allows a later upgrade', async () => {
+  const page = harness();
+  await flush();
+  assert.equal(page.img.getAttribute('src'), original);
+
+  page.history.pushState({}, '', '/r/test/comments/abc/post/');
+  await flush();
+  assert.equal(page.img.getAttribute('src'), preview);
+  assert.equal(page.img.getAttribute('srcset'), `${preview} 1x`);
+  assert.equal(page.listeners.has('error'), false);
+
+  page.history.pushState({}, '', '?i=0');
+  await flush();
+  assert.equal(page.img.getAttribute('src'), original);
+});
+
+test('leaving slide mode does not overwrite an image Reddit already changed', async () => {
+  const page = harness();
+  await flush();
+  const changed = 'https://preview.redd.it/different.png?width=640';
+  page.img.setAttribute('src', changed);
+  page.history.replaceState({}, '', '/r/test/comments/abc/post/');
+  await flush();
+  assert.equal(page.img.getAttribute('src'), changed);
+});
+
 test('suppresses responsive preview sources added after an upgrade', async () => {
   const page = harness();
   await flush();

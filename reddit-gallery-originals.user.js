@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Gallery Originals
 // @namespace    https://github.com/508-dev/bigredditgallery
-// @version      0.1.1
+// @version      0.1.2
 // @description  Show original Reddit images in individual gallery slides.
 // @match        https://www.reddit.com/r/*/comments/*
 // @match        https://reddit.com/r/*/comments/*
@@ -17,6 +17,7 @@
 
   const failed = new WeakMap();
   const upgraded = new WeakMap();
+  const upgradedImages = new Set();
 
   function originalUrl(value) {
     try {
@@ -39,10 +40,12 @@
     if (img.closest('shreddit-comment')) return;
 
     const preview = img.getAttribute('src');
-    if (upgraded.get(img) === preview) {
+    const previous = upgraded.get(img);
+    if (previous?.original === preview) {
       suppressResponsiveSources(img);
       return;
     }
+    previous?.detach();
     const original = preview && originalUrl(preview);
     if (!original || failed.get(img) === preview) return;
 
@@ -51,9 +54,17 @@
     const srcset = img.getAttribute('srcset');
     const sizes = img.getAttribute('sizes');
 
-    function restore() {
+    function detach() {
+      img.removeEventListener('load', loaded);
+      img.removeEventListener('error', failedLoad);
       upgraded.delete(img);
-      failed.set(img, preview);
+      upgradedImages.delete(img);
+    }
+
+    function restore(markFailed = false) {
+      detach();
+      if (img.getAttribute('src') !== original) return;
+      if (markFailed) failed.set(img, preview);
       img.setAttribute('src', preview);
       if (srcset === null) img.removeAttribute('srcset');
       else img.setAttribute('srcset', srcset);
@@ -70,13 +81,13 @@
     }
 
     function failedLoad() {
-      img.removeEventListener('load', loaded);
-      restore();
+      restore(true);
     }
 
     img.addEventListener('load', loaded, { once: true });
     img.addEventListener('error', failedLoad, { once: true });
-    upgraded.set(img, original);
+    upgraded.set(img, { original, detach, restore });
+    upgradedImages.add(img);
     suppressResponsiveSources(img);
     img.removeAttribute('sizes');
     img.setAttribute('src', original);
@@ -115,7 +126,10 @@
     queued = true;
     queueMicrotask(() => {
       queued = false;
-      if (!inIndividualSlide()) return;
+      if (!inIndividualSlide()) {
+        for (const img of [...upgradedImages]) upgraded.get(img)?.restore();
+        return;
+      }
       const img = activeImage();
       if (img && visibleArea(img) > 0) upgrade(img);
     });
