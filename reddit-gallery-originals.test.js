@@ -28,18 +28,47 @@ function makeImage(src = preview, rect = { left: 0, top: 0, right: 600, bottom: 
 function harness(search = '?i=0', src = preview, extras = []) {
   const primary = makeImage(src);
   let mutation;
+  const frames = [];
+  const documentListeners = new Map();
   const location = { href: `https://www.reddit.com/r/test/comments/abc/post/${search}`, pathname: '/r/test/comments/abc/post/', search };
+  function updateLocation(url) {
+    const next = new URL(url, location.href);
+    location.href = next.href;
+    location.pathname = next.pathname;
+    location.search = next.search;
+  }
+  const history = {
+    calls: [],
+    pushState(...args) {
+      this.calls.push(['pushState', ...args]);
+      updateLocation(args[2]);
+      return 'push result';
+    },
+    replaceState(...args) {
+      this.calls.push(['replaceState', ...args]);
+      updateLocation(args[2]);
+      return 'replace result';
+    },
+  };
   const document = {
     documentElement: {},
     getElementById: id => id === 't3_abc' ? { querySelectorAll: () => [primary.img, ...extras.map(extra => extra.img)] } : null,
     querySelectorAll: () => [],
+    addEventListener: (event, fn) => documentListeners.set(event, fn),
   };
   class MutationObserver {
     constructor(callback) { mutation = callback; }
     observe() {}
   }
-  vm.runInNewContext(script, { URL, URLSearchParams, WeakMap, MutationObserver, location, document, queueMicrotask, addEventListener() {}, innerWidth: 1000, innerHeight: 800 });
-  return { ...primary, location, mutate: () => mutation() };
+  vm.runInNewContext(script, { URL, URLSearchParams, WeakMap, MutationObserver, location, history, document, queueMicrotask, requestAnimationFrame: fn => frames.push(fn), addEventListener() {}, innerWidth: 1000, innerHeight: 800 });
+  return {
+    ...primary,
+    location,
+    history,
+    documentListeners,
+    mutate: (records = [{ type: 'childList', target: document.documentElement }]) => mutation(records),
+    frame: () => frames.shift()?.(),
+  };
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -101,6 +130,61 @@ test('upgrades the next slide after navigation makes it visible', async () => {
   next.img.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 600 });
   page.location.search = '?i=1';
   page.mutate();
+  await flush();
+  assert.equal(next.img.getAttribute('src'), 'https://i.redd.it/next.png');
+});
+
+for (const method of ['pushState', 'replaceState']) {
+  test(`${method} rescans an already-mounted slide without a DOM mutation`, async () => {
+    const next = makeImage('https://preview.redd.it/next.png?width=640', { left: 1200, top: 0, right: 1800, bottom: 600 });
+    const page = harness('?i=0', preview, [next]);
+    await flush();
+
+    const result = page.history[method]({ slide: 1 }, '', '?i=1');
+    page.img.getBoundingClientRect = () => ({ left: -1200, top: 0, right: -600, bottom: 600 });
+    next.img.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 600 });
+    await flush();
+
+    assert.equal(result, method === 'pushState' ? 'push result' : 'replace result');
+    assert.equal(page.location.search, '?i=1');
+    assert.equal(next.img.getAttribute('src'), 'https://i.redd.it/next.png');
+    assert.equal(page.history.calls[0][0], method);
+  });
+}
+
+test('the next animation frame catches a slide activated after the history scan', async () => {
+  const next = makeImage('https://preview.redd.it/next.png?width=640', { left: 1200, top: 0, right: 1800, bottom: 600 });
+  const page = harness('?i=0', preview, [next]);
+  await flush();
+  page.history.pushState({}, '', '?i=1');
+  await flush();
+  assert.equal(next.img.getAttribute('src'), 'https://preview.redd.it/next.png?width=640');
+
+  page.img.getBoundingClientRect = () => ({ left: -1200, top: 0, right: -600, bottom: 600 });
+  next.img.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 600 });
+  page.frame();
+  await flush();
+  assert.equal(next.img.getAttribute('src'), 'https://i.redd.it/next.png');
+});
+
+test('carousel style changes trigger a rescan', async () => {
+  const next = makeImage('https://preview.redd.it/next.png?width=640', { left: 1200, top: 0, right: 1800, bottom: 600 });
+  const page = harness('?i=0', preview, [next]);
+  await flush();
+  page.img.getBoundingClientRect = () => ({ left: -1200, top: 0, right: -600, bottom: 600 });
+  next.img.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 600 });
+  page.mutate([{ type: 'attributes', attributeName: 'style', target: { closest: () => ({}) } }]);
+  await flush();
+  assert.equal(next.img.getAttribute('src'), 'https://i.redd.it/next.png');
+});
+
+test('internal carousel scrolling triggers a rescan', async () => {
+  const next = makeImage('https://preview.redd.it/next.png?width=640', { left: 1200, top: 0, right: 1800, bottom: 600 });
+  const page = harness('?i=0', preview, [next]);
+  await flush();
+  page.img.getBoundingClientRect = () => ({ left: -1200, top: 0, right: -600, bottom: 600 });
+  next.img.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 600 });
+  page.documentListeners.get('scroll')();
   await flush();
   assert.equal(next.img.getAttribute('src'), 'https://i.redd.it/next.png');
 });

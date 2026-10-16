@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Gallery Originals
 // @namespace    https://github.com/508-dev/bigredditgallery
-// @version      0.1.0
+// @version      0.1.1
 // @description  Show original Reddit images in individual gallery slides.
 // @match        https://www.reddit.com/r/*/comments/*
 // @match        https://reddit.com/r/*/comments/*
@@ -121,14 +121,31 @@
     });
   }
 
-  new MutationObserver(scan).observe(document.documentElement, {
+  const gallerySelector = 'gallery-carousel, shreddit-gallery-carousel, shreddit-gallery, [role="dialog"]';
+  new MutationObserver(records => {
+    if (records.some(record =>
+      !['class', 'style'].includes(record.attributeName) || record.target.closest?.(gallerySelector)
+    )) scan();
+  }).observe(document.documentElement, {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['src', 'srcset'],
+    attributeFilter: ['src', 'srcset', 'class', 'style'],
   });
+
+  for (const method of ['pushState', 'replaceState']) {
+    const original = history[method];
+    history[method] = function (...args) {
+      const result = Reflect.apply(original, this, args);
+      scan();
+      requestAnimationFrame(scan);
+      return result;
+    };
+  }
+
   addEventListener('popstate', scan);
   addEventListener('scroll', scan, { passive: true });
+  document.addEventListener('scroll', scan, { capture: true, passive: true });
   addEventListener('resize', scan);
   scan();
 })();
