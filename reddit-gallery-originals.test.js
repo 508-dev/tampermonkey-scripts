@@ -219,19 +219,35 @@ test('suppresses responsive preview sources added after an upgrade', async () =>
   const page = harness();
   await flush();
   page.img.setAttribute('srcset', `${preview} 2x`);
+  page.img.setAttribute('sizes', '100vw');
   page.mutate();
   await flush();
   assert.equal(page.img.getAttribute('src'), original);
   assert.equal(page.img.getAttribute('srcset'), null);
+  assert.equal(page.img.getAttribute('sizes'), null);
+
+  page.history.pushState({}, '', '/r/test/comments/abc/post/');
+  await flush();
+  assert.equal(page.img.getAttribute('srcset'), `${preview} 2x`);
+  assert.equal(page.img.getAttribute('sizes'), '100vw');
 });
 
 test('suppresses picture sources added after an upgrade', async () => {
   const page = harness();
   const source = makeImage(preview);
-  page.img.closest = selector => selector === 'picture' ? { querySelectorAll: () => [source.img] } : null;
+  const sources = [source.img];
+  page.img.closest = selector => selector === 'picture' ? { querySelectorAll: () => sources } : null;
   await flush();
   source.img.setAttribute('srcset', `${preview} 2x`);
+  const added = makeImage('https://preview.redd.it/added.png?width=640');
+  sources.push(added.img);
   page.mutate();
   await flush();
   assert.equal(source.img.getAttribute('srcset'), null);
+  assert.equal(added.img.getAttribute('srcset'), null);
+
+  page.history.replaceState({}, '', '/r/test/comments/abc/post/');
+  await flush();
+  assert.equal(source.img.getAttribute('srcset'), `${preview} 2x`);
+  assert.equal(added.img.getAttribute('srcset'), 'https://preview.redd.it/added.png?width=640 1x');
 });

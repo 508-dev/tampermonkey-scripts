@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Gallery Originals
 // @namespace    https://github.com/508-dev/bigredditgallery
-// @version      0.1.2
+// @version      0.1.3
 // @description  Show original Reddit images in individual gallery slides.
 // @match        https://www.reddit.com/r/*/comments/*
 // @match        https://reddit.com/r/*/comments/*
@@ -42,17 +42,35 @@
     const preview = img.getAttribute('src');
     const previous = upgraded.get(img);
     if (previous?.original === preview) {
-      suppressResponsiveSources(img);
+      previous.suppress();
       return;
     }
     previous?.detach();
     const original = preview && originalUrl(preview);
     if (!original || failed.get(img) === preview) return;
 
-    const sources = Array.from(img.closest('picture')?.querySelectorAll('source') || []);
-    const saved = sources.map(source => [source, source.getAttribute('srcset')]);
-    const srcset = img.getAttribute('srcset');
-    const sizes = img.getAttribute('sizes');
+    const responsive = {
+      srcset: img.getAttribute('srcset'),
+      sizes: img.getAttribute('sizes'),
+      sources: new Map(),
+    };
+
+    function rememberResponsiveSources() {
+      if (img.hasAttribute('srcset')) responsive.srcset = img.getAttribute('srcset');
+      if (img.hasAttribute('sizes')) responsive.sizes = img.getAttribute('sizes');
+      for (const source of img.closest('picture')?.querySelectorAll('source') || []) {
+        if (source.hasAttribute('srcset')) responsive.sources.set(source, source.getAttribute('srcset'));
+      }
+    }
+
+    function suppress() {
+      rememberResponsiveSources();
+      for (const source of responsive.sources.keys()) {
+        if (source.hasAttribute('srcset')) source.removeAttribute('srcset');
+      }
+      if (img.hasAttribute('srcset')) img.removeAttribute('srcset');
+      if (img.hasAttribute('sizes')) img.removeAttribute('sizes');
+    }
 
     function detach() {
       img.removeEventListener('load', loaded);
@@ -62,17 +80,17 @@
     }
 
     function restore(markFailed = false) {
+      rememberResponsiveSources();
       detach();
       if (img.getAttribute('src') !== original) return;
       if (markFailed) failed.set(img, preview);
       img.setAttribute('src', preview);
-      if (srcset === null) img.removeAttribute('srcset');
-      else img.setAttribute('srcset', srcset);
-      if (sizes === null) img.removeAttribute('sizes');
-      else img.setAttribute('sizes', sizes);
-      for (const [source, value] of saved) {
-        if (value === null) source.removeAttribute('srcset');
-        else source.setAttribute('srcset', value);
+      if (responsive.srcset === null) img.removeAttribute('srcset');
+      else img.setAttribute('srcset', responsive.srcset);
+      if (responsive.sizes === null) img.removeAttribute('sizes');
+      else img.setAttribute('sizes', responsive.sizes);
+      for (const [source, value] of responsive.sources) {
+        source.setAttribute('srcset', value);
       }
     }
 
@@ -86,18 +104,10 @@
 
     img.addEventListener('load', loaded, { once: true });
     img.addEventListener('error', failedLoad, { once: true });
-    upgraded.set(img, { original, detach, restore });
+    upgraded.set(img, { original, detach, restore, suppress });
     upgradedImages.add(img);
-    suppressResponsiveSources(img);
-    img.removeAttribute('sizes');
+    suppress();
     img.setAttribute('src', original);
-  }
-
-  function suppressResponsiveSources(img) {
-    for (const source of img.closest('picture')?.querySelectorAll('source') || []) {
-      if (source.hasAttribute('srcset')) source.removeAttribute('srcset');
-    }
-    if (img.hasAttribute('srcset')) img.removeAttribute('srcset');
   }
 
   function visibleArea(img) {
@@ -130,6 +140,7 @@
         for (const img of [...upgradedImages]) upgraded.get(img)?.restore();
         return;
       }
+      for (const img of upgradedImages) upgraded.get(img)?.suppress();
       const img = activeImage();
       if (img && visibleArea(img) > 0) upgrade(img);
     });
@@ -144,7 +155,7 @@
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['src', 'srcset', 'class', 'style'],
+    attributeFilter: ['src', 'srcset', 'sizes', 'class', 'style'],
   });
 
   for (const method of ['pushState', 'replaceState']) {
