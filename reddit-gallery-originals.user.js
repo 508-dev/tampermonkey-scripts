@@ -5,8 +5,9 @@
 // @description  Show original Reddit images in individual gallery slides.
 // @match        https://www.reddit.com/r/*/comments/*
 // @match        https://reddit.com/r/*/comments/*
-// @updateURL    https://raw.githubusercontent.com/508-dev/bigredditgallery/main/reddit-gallery-originals.user.js
-// @downloadURL  https://raw.githubusercontent.com/508-dev/bigredditgallery/main/reddit-gallery-originals.user.js
+// @homepageURL  https://github.com/508-dev/tampermonkey-scripts
+// @updateURL    https://raw.githubusercontent.com/508-dev/tampermonkey-scripts/main/reddit-gallery-originals.user.js
+// @downloadURL  https://raw.githubusercontent.com/508-dev/tampermonkey-scripts/main/reddit-gallery-originals.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
