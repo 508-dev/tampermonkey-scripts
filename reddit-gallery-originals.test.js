@@ -7,13 +7,14 @@ const script = fs.readFileSync('reddit-gallery-originals.user.js', 'utf8');
 const preview = 'https://preview.redd.it/example.png?width=640&auto=webp';
 const original = 'https://i.redd.it/example.png';
 
-function harness(search = '?i=0', src = preview) {
-  const attributes = new Map([['src', src], ['srcset', `${preview} 1x`]]);
+function makeImage(src = preview, rect = { left: 0, top: 0, right: 600, bottom: 600 }) {
+  const attributes = new Map([['src', src], ['srcset', `${src} 1x`]]);
   const listeners = new Map();
-  let mutation;
   const img = {
     closest: () => null,
+    getBoundingClientRect: () => rect,
     getAttribute: key => attributes.get(key) ?? null,
+    hasAttribute: key => attributes.has(key),
     setAttribute: (key, value) => attributes.set(key, value),
     removeAttribute: key => attributes.delete(key),
     addEventListener: (event, fn) => listeners.set(event, fn),
@@ -21,17 +22,24 @@ function harness(search = '?i=0', src = preview) {
       if (listeners.get(event) === fn) listeners.delete(event);
     },
   };
+  return { img, attributes, listeners };
+}
+
+function harness(search = '?i=0', src = preview, extras = []) {
+  const primary = makeImage(src);
+  let mutation;
   const location = { href: `https://www.reddit.com/r/test/comments/abc/post/${search}`, pathname: '/r/test/comments/abc/post/', search };
   const document = {
     documentElement: {},
-    querySelectorAll: () => [img],
+    getElementById: id => id === 't3_abc' ? { querySelectorAll: () => [primary.img, ...extras.map(extra => extra.img)] } : null,
+    querySelectorAll: () => [],
   };
   class MutationObserver {
     constructor(callback) { mutation = callback; }
     observe() {}
   }
-  vm.runInNewContext(script, { URL, URLSearchParams, WeakMap, MutationObserver, location, document, queueMicrotask, addEventListener() {} });
-  return { img, attributes, listeners, location, mutate: () => mutation() };
+  vm.runInNewContext(script, { URL, URLSearchParams, WeakMap, MutationObserver, location, document, queueMicrotask, addEventListener() {}, innerWidth: 1000, innerHeight: 800 });
+  return { ...primary, location, mutate: () => mutation() };
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -75,4 +83,45 @@ test('ignores unrelated image hosts', async () => {
   const page = harness('?i=0', 'https://example.com/example.png');
   await flush();
   assert.equal(page.img.getAttribute('src'), 'https://example.com/example.png');
+});
+
+test('upgrades only the visible slide in the current post', async () => {
+  const hidden = makeImage('https://preview.redd.it/hidden.png?width=640', { left: 1200, top: 0, right: 1800, bottom: 600 });
+  const page = harness('?i=0', preview, [hidden]);
+  await flush();
+  assert.equal(page.img.getAttribute('src'), original);
+  assert.equal(hidden.img.getAttribute('src'), 'https://preview.redd.it/hidden.png?width=640');
+});
+
+test('upgrades the next slide after navigation makes it visible', async () => {
+  const next = makeImage('https://preview.redd.it/next.png?width=640', { left: 1200, top: 0, right: 1800, bottom: 600 });
+  const page = harness('?i=0', preview, [next]);
+  await flush();
+  page.img.getBoundingClientRect = () => ({ left: -1200, top: 0, right: -600, bottom: 600 });
+  next.img.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 600 });
+  page.location.search = '?i=1';
+  page.mutate();
+  await flush();
+  assert.equal(next.img.getAttribute('src'), 'https://i.redd.it/next.png');
+});
+
+test('suppresses responsive preview sources added after an upgrade', async () => {
+  const page = harness();
+  await flush();
+  page.img.setAttribute('srcset', `${preview} 2x`);
+  page.mutate();
+  await flush();
+  assert.equal(page.img.getAttribute('src'), original);
+  assert.equal(page.img.getAttribute('srcset'), null);
+});
+
+test('suppresses picture sources added after an upgrade', async () => {
+  const page = harness();
+  const source = makeImage(preview);
+  page.img.closest = selector => selector === 'picture' ? { querySelectorAll: () => [source.img] } : null;
+  await flush();
+  source.img.setAttribute('srcset', `${preview} 2x`);
+  page.mutate();
+  await flush();
+  assert.equal(source.img.getAttribute('srcset'), null);
 });

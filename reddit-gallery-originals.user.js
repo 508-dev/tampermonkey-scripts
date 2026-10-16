@@ -5,6 +5,8 @@
 // @description  Show original Reddit images in individual gallery slides.
 // @match        https://www.reddit.com/r/*/comments/*
 // @match        https://reddit.com/r/*/comments/*
+// @updateURL    https://raw.githubusercontent.com/508-dev/bigredditgallery/main/reddit-gallery-originals.user.js
+// @downloadURL  https://raw.githubusercontent.com/508-dev/bigredditgallery/main/reddit-gallery-originals.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
@@ -13,6 +15,7 @@
   'use strict';
 
   const failed = new WeakMap();
+  const upgraded = new WeakMap();
 
   function originalUrl(value) {
     try {
@@ -35,6 +38,10 @@
     if (img.closest('shreddit-comment')) return;
 
     const preview = img.getAttribute('src');
+    if (upgraded.get(img) === preview) {
+      suppressResponsiveSources(img);
+      return;
+    }
     const original = preview && originalUrl(preview);
     if (!original || failed.get(img) === preview) return;
 
@@ -44,6 +51,7 @@
     const sizes = img.getAttribute('sizes');
 
     function restore() {
+      upgraded.delete(img);
       failed.set(img, preview);
       img.setAttribute('src', preview);
       if (srcset === null) img.removeAttribute('srcset');
@@ -67,10 +75,37 @@
 
     img.addEventListener('load', loaded, { once: true });
     img.addEventListener('error', failedLoad, { once: true });
-    for (const [source] of saved) source.removeAttribute('srcset');
-    img.removeAttribute('srcset');
+    upgraded.set(img, original);
+    suppressResponsiveSources(img);
     img.removeAttribute('sizes');
     img.setAttribute('src', original);
+  }
+
+  function suppressResponsiveSources(img) {
+    for (const source of img.closest('picture')?.querySelectorAll('source') || []) {
+      if (source.hasAttribute('srcset')) source.removeAttribute('srcset');
+    }
+    if (img.hasAttribute('srcset')) img.removeAttribute('srcset');
+  }
+
+  function visibleArea(img) {
+    if (img.checkVisibility && !img.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return 0;
+    const rect = img.getBoundingClientRect();
+    const frame = img.closest('gallery-carousel, shreddit-gallery-carousel, shreddit-gallery, [role="dialog"]')?.getBoundingClientRect();
+    const width = Math.max(0, Math.min(rect.right, frame?.right ?? innerWidth, innerWidth) - Math.max(rect.left, frame?.left ?? 0, 0));
+    const height = Math.max(0, Math.min(rect.bottom, frame?.bottom ?? innerHeight, innerHeight) - Math.max(rect.top, frame?.top ?? 0, 0));
+    return width * height;
+  }
+
+  function activeImage() {
+    const postId = location.pathname.match(/^\/r\/[^/]+\/comments\/([^/]+)/)?.[1];
+    const post = document.getElementById(`t3_${postId}`);
+    const dialogImages = Array.from(document.querySelectorAll('[role="dialog"] img[src*="redd.it"]'));
+    const images = dialogImages.some(img => visibleArea(img) > 0)
+      ? dialogImages
+      : Array.from(post?.querySelectorAll('img[src*="redd.it"]') || []);
+
+    return images.reduce((best, img) => !best || visibleArea(img) > visibleArea(best) ? img : best, null);
   }
 
   let queued = false;
@@ -80,7 +115,8 @@
     queueMicrotask(() => {
       queued = false;
       if (!inIndividualSlide()) return;
-      document.querySelectorAll('shreddit-post img[src*="preview.redd.it"], gallery-carousel img[src*="preview.redd.it"], shreddit-gallery img[src*="preview.redd.it"], [role="dialog"] img[src*="preview.redd.it"]').forEach(upgrade);
+      const img = activeImage();
+      if (img && visibleArea(img) > 0) upgrade(img);
     });
   }
 
@@ -91,5 +127,7 @@
     attributeFilter: ['src', 'srcset'],
   });
   addEventListener('popstate', scan);
+  addEventListener('scroll', scan, { passive: true });
+  addEventListener('resize', scan);
   scan();
 })();
