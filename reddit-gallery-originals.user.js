@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Gallery Originals
 // @namespace    https://github.com/508-dev/bigredditgallery
-// @version      0.1.3
+// @version      0.1.4
 // @description  Show original Reddit images in individual gallery slides.
 // @match        https://www.reddit.com/r/*/comments/*
 // @match        https://reddit.com/r/*/comments/*
@@ -81,10 +81,12 @@
 
     function restore(markFailed = false) {
       rememberResponsiveSources();
+      const stillOriginal = img.getAttribute('src') === original;
       detach();
-      if (img.getAttribute('src') !== original) return;
-      if (markFailed) failed.set(img, preview);
-      img.setAttribute('src', preview);
+      if (stillOriginal) {
+        if (markFailed) failed.set(img, preview);
+        img.setAttribute('src', preview);
+      }
       if (responsive.srcset === null) img.removeAttribute('srcset');
       else img.setAttribute('srcset', responsive.srcset);
       if (responsive.sizes === null) img.removeAttribute('sizes');

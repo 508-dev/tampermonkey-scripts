@@ -210,9 +210,13 @@ test('leaving slide mode does not overwrite an image Reddit already changed', as
   await flush();
   const changed = 'https://preview.redd.it/different.png?width=640';
   page.img.setAttribute('src', changed);
+  page.img.setAttribute('srcset', `${changed} 2x`);
+  page.img.setAttribute('sizes', '80vw');
   page.history.replaceState({}, '', '/r/test/comments/abc/post/');
   await flush();
   assert.equal(page.img.getAttribute('src'), changed);
+  assert.equal(page.img.getAttribute('srcset'), `${changed} 2x`);
+  assert.equal(page.img.getAttribute('sizes'), '80vw');
 });
 
 test('suppresses responsive preview sources added after an upgrade', async () => {
