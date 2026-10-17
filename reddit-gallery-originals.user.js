@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Reddit Gallery Originals
 // @namespace    https://github.com/508-dev/bigredditgallery
-// @version      0.1.4
-// @description  Show original Reddit images in individual gallery slides.
+// @version      0.2.0
+// @description  Fit original Reddit gallery images to the screen on classic and modern Reddit.
 // @match        https://www.reddit.com/r/*/comments/*
 // @match        https://reddit.com/r/*/comments/*
+// @match        https://old.reddit.com/r/*/comments/*
 // @homepageURL  https://github.com/508-dev/tampermonkey-scripts
 // @updateURL    https://raw.githubusercontent.com/508-dev/tampermonkey-scripts/main/reddit-gallery-originals.user.js
 // @downloadURL  https://raw.githubusercontent.com/508-dev/tampermonkey-scripts/main/reddit-gallery-originals.user.js
@@ -43,9 +44,10 @@
     const previous = upgraded.get(img);
     if (previous?.original === preview) {
       previous.suppress();
+      previous.fit();
       return;
     }
-    previous?.detach();
+    previous?.restore();
     const original = preview && originalUrl(preview);
     if (!original || failed.get(img) === preview) return;
 
@@ -54,6 +56,36 @@
       sizes: img.getAttribute('sizes'),
       sources: new Map(),
     };
+    const styles = new Map();
+    let ready = false;
+
+    function setStyle(element, property, value) {
+      if (!styles.has(element)) styles.set(element, new Map());
+      const saved = styles.get(element);
+      if (!saved.has(property)) saved.set(property, {
+        value: element.style.getPropertyValue(property),
+        priority: element.style.getPropertyPriority(property),
+      });
+      // Avoid generating a MutationObserver loop from our own layout updates.
+      if (element.style.getPropertyValue(property) !== value || element.style.getPropertyPriority(property) !== 'important') {
+        element.style.setProperty(property, value, 'important');
+      }
+    }
+
+    function fit() {
+      if (!ready || !img.naturalWidth || !img.naturalHeight) return;
+      const slide = img.closest('.gallery-preview');
+      if (slide) setStyle(slide, 'max-width', 'none');
+      const left = Math.max(0, img.getBoundingClientRect().left);
+      const scale = Math.min(1,
+        Math.max(1, innerWidth - left - 24) / img.naturalWidth,
+        Math.max(1, innerHeight - 80) / img.naturalHeight);
+      setStyle(img, 'width', `${Math.floor(img.naturalWidth * scale)}px`);
+      setStyle(img, 'height', 'auto');
+      setStyle(img, 'max-width', '100%');
+      setStyle(img, 'max-height', `${Math.max(1, innerHeight - 80)}px`);
+      setStyle(img, 'object-fit', 'contain');
+    }
 
     function rememberResponsiveSources() {
       if (img.hasAttribute('srcset')) responsive.srcset = img.getAttribute('srcset');
@@ -83,6 +115,12 @@
       rememberResponsiveSources();
       const stillOriginal = img.getAttribute('src') === original;
       detach();
+      for (const [element, properties] of styles) {
+        for (const [property, saved] of properties) {
+          if (saved.value) element.style.setProperty(property, saved.value, saved.priority);
+          else element.style.removeProperty(property);
+        }
+      }
       if (stillOriginal) {
         if (markFailed) failed.set(img, preview);
         img.setAttribute('src', preview);
@@ -98,6 +136,8 @@
 
     function loaded() {
       img.removeEventListener('error', failedLoad);
+      ready = true;
+      fit();
     }
 
     function failedLoad() {
@@ -106,7 +146,7 @@
 
     img.addEventListener('load', loaded, { once: true });
     img.addEventListener('error', failedLoad, { once: true });
-    upgraded.set(img, { original, detach, restore, suppress });
+    upgraded.set(img, { original, restore, suppress, fit });
     upgradedImages.add(img);
     suppress();
     img.setAttribute('src', original);
@@ -123,6 +163,14 @@
 
   function activeImage() {
     const postId = location.pathname.match(/^\/r\/[^/]+\/comments\/([^/]+)/)?.[1];
+    if (!postId) return null;
+    // Classic Reddit uses a different post ID and switches slides without ?i=.
+    const classicPost = document.getElementById(`thing_t3_${postId}`);
+    if (classicPost) {
+      return Array.from(classicPost.querySelectorAll('.gallery-preview img.preview'))
+        .find(img => visibleArea(img) > 0) || null;
+    }
+    if (!inIndividualSlide()) return null;
     const post = document.getElementById(`t3_${postId}`);
     const dialogImages = Array.from(document.querySelectorAll('[role="dialog"] img[src*="redd.it"]'));
     const images = dialogImages.some(img => visibleArea(img) > 0)
@@ -138,17 +186,15 @@
     queued = true;
     queueMicrotask(() => {
       queued = false;
-      if (!inIndividualSlide()) {
-        for (const img of [...upgradedImages]) upgraded.get(img)?.restore();
-        return;
-      }
-      for (const img of upgradedImages) upgraded.get(img)?.suppress();
       const img = activeImage();
+      for (const previous of [...upgradedImages]) {
+        if (previous !== img) upgraded.get(previous)?.restore();
+      }
       if (img && visibleArea(img) > 0) upgrade(img);
     });
   }
 
-  const gallerySelector = 'gallery-carousel, shreddit-gallery-carousel, shreddit-gallery, [role="dialog"]';
+  const gallerySelector = '.media-gallery, gallery-carousel, shreddit-gallery-carousel, shreddit-gallery, [role="dialog"]';
   new MutationObserver(records => {
     if (records.some(record =>
       !['class', 'style'].includes(record.attributeName) || record.target.closest?.(gallerySelector)
